@@ -5,6 +5,10 @@ node_modules
 dist
 .cache
 
+# Local debugging: credentials + local pipeline output (never committed)
+.env.local
+data-local/
+
 # Editor / IDE
 .idea/
 

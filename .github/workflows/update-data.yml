@@ -61,6 +61,7 @@ jobs:
           WOW_REGION: eu
           WOW_LOCALE: en_GB
           WOW_REALM_SLUG: ravencrest
+          MAX_NEW_ILVL: '2500'   # resolve all variants in one pass (cache persists, so later runs do ~0)
         run: node scripts/fetch-boes.mjs
 
       - name: Publish to data branch
