@@ -1,0 +1,65 @@
+<!doctype html>
+<html class="no-js" lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Celena Auction House — Midnight BoE flips</title>
+  <link rel="stylesheet" href="css/style.css">
+  <meta name="description" content="Mispriced Midnight BoE gear on EU Ravencrest — buy low, resell for profit.">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="site.webmanifest">
+  <meta name="theme-color" content="#0d0f16">
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚑</span>
+      <h1>Celena <span>Auction House</span></h1>
+    </div>
+    <nav class="nav">
+      <a href="index.html">Commodities</a>
+      <a href="boe.html" class="active">BoE flips</a>
+    </nav>
+    <div class="status" id="status">Loading…</div>
+  </header>
+
+  <section class="toolbar">
+    <input id="search" type="search" placeholder="Search gear…" autocomplete="off" spellcheck="false">
+    <label class="check">Min ilvl <input id="minIlvl" type="number" min="0" step="1" placeholder="0" class="num-input"></label>
+    <label class="check"><input type="checkbox" id="flipsOnly"> Flips only</label>
+    <span class="spacer"></span>
+    <span id="count" class="count"></span>
+  </section>
+
+  <main class="layout">
+    <div class="table-wrap">
+      <table class="ah">
+        <thead>
+          <tr>
+            <th data-sort="name" class="c-item">Item</th>
+            <th data-sort="ilvl" class="c-num">ilvl</th>
+            <th data-sort="cheapest" class="c-num">Buy&nbsp;(cheapest)</th>
+            <th data-sort="resell" class="c-num">Resell&nbsp;(next)</th>
+            <th data-sort="profit" class="c-num">Profit</th>
+            <th data-sort="count" class="c-num">#</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="empty" hidden></div>
+    </div>
+    <aside id="detail" class="detail" hidden></aside>
+  </main>
+
+  <footer class="footer">
+    <span>BoE gear on EU Ravencrest · refreshed hourly · item levels decoded from bonus IDs (may be off for a few raid drops).</span>
+    <span>Not affiliated with Blizzard Entertainment.</span>
+  </footer>
+
+  <script type="module" src="js/boe.js"></script>
+</body>
+
+</html>

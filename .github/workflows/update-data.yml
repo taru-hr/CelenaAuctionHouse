@@ -48,6 +48,16 @@ jobs:
           MAX_NEW_META: '12000'   # backfill all item names in one run (~2 calls each, well under the 36k/hr limit)
         run: node scripts/fetch-commodities.mjs
 
+      - name: Fetch Midnight BoEs (Ravencrest)
+        continue-on-error: true    # don't fail the commodities update if BoE fetch has a hiccup
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          WOW_REGION: eu
+          WOW_LOCALE: en_GB
+          WOW_REALM_SLUG: ravencrest
+        run: node scripts/fetch-boes.mjs
+
       - name: Publish to data branch
         run: |
           cd data
