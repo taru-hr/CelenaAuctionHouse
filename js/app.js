@@ -9,12 +9,18 @@ import { PriceChart } from './chart.js';
 const VISIBLE_LIMIT = 400; // cap rendered rows for performance; search to narrow
 const QUALITIES = ['POOR', 'COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'ARTIFACT', 'HEIRLOOM'];
 
+// Items from the current expansion (Midnight, 12.0) cluster above this id; legacy
+// goods sprawl below it. Bump toward 237000 for a stricter Midnight-only view.
+const CURRENT_EXPANSION_MIN_ID = 234000;
+
 const state = {
   rows: [],
   sortKey: 'qty',
   sortDir: -1, // -1 desc, 1 asc
   search: '',
   quality: 'ALL',
+  tier: 'ALL',
+  currentExpOnly: true,
   dealsOnly: false,
   selected: null,
 };
@@ -61,16 +67,41 @@ function buildRows(latest, meta) {
       pct24: pct24 == null ? null : pct24,
       avg14: avg, low14: low14 || min,
       below, nearLow,
+      tier: 0, tierCount: 0,
     });
   }
+  computeTiers(out);
   return out;
+}
+
+// Crafting-quality tiers (Dragonflight+) are separate item IDs sharing a name,
+// numbered consecutively (T1 = base id, T2 = base+1, …). So group by name and
+// derive the tier from the id offset. A tight-cluster guard avoids treating
+// unrelated same-named items as tiers.
+function computeTiers(rows) {
+  const byName = new Map();
+  for (const r of rows) {
+    let g = byName.get(r.name);
+    if (!g) byName.set(r.name, (g = []));
+    g.push(r);
+  }
+  for (const g of byName.values()) {
+    if (g.length < 2 || g.length > 5) continue;
+    let min = Infinity, max = -Infinity;
+    for (const r of g) { if (r.id < min) min = r.id; if (r.id > max) max = r.id; }
+    if (max - min > 4) continue; // scattered ids => not a crafting-quality set
+    const count = max - min + 1;
+    for (const r of g) { r.tier = r.id - min + 1; r.tierCount = count; }
+  }
 }
 
 // ------------------------------------------------------------- render ------
 function render() {
   const q = state.search.trim().toLowerCase();
   let rows = state.rows.filter((r) => {
+    if (state.currentExpOnly && r.id < CURRENT_EXPANSION_MIN_ID) return false;
     if (state.quality !== 'ALL' && r.quality !== state.quality) return false;
+    if (state.tier !== 'ALL' && String(r.tier) !== state.tier) return false;
     if (state.dealsOnly && !(r.nearLow || r.below >= 0.08)) return false;
     if (q && !r.name.toLowerCase().includes(q)) return false;
     return true;
@@ -109,13 +140,18 @@ function rowHTML(r) {
   const pct = r.pct24 == null ? '<span class="dim">—</span>' : `<span class="${pctCls}">${fmtPct(r.pct24)}</span>`;
 
   return `<tr data-id="${r.id}">
-    <td class="c-item"><a class="item" href="#item-${r.id}">${iconCell}<span class="name q-${r.quality}">${esc(r.name)}</span></a></td>
+    <td class="c-item"><a class="item" href="#item-${r.id}">${iconCell}<span class="name q-${r.quality}">${esc(r.name)}</span>${tierBadge(r)}</a></td>
     <td class="c-num">${moneyHTML(r.min)}</td>
     <td class="c-num">${moneyHTML(r.market)}</td>
     <td class="c-num dim">${fmtQty(r.qty)}</td>
     <td class="c-num">${pct}</td>
     <td class="c-deal">${dealBadge(r)}</td>
   </tr>`;
+}
+
+function tierBadge(r) {
+  if (!r.tier) return '';
+  return `<span class="tier t${r.tier}" title="Crafting quality ${r.tier} of ${r.tierCount}">${r.tier}</span>`;
 }
 
 function dealBadge(r) {
@@ -157,8 +193,8 @@ function detailShell(r) {
     <div class="d-head">
       ${iconHTML}
       <div>
-        <div class="d-name q-${r.quality}">${esc(r.name)}</div>
-        <div class="d-sub">Item #${r.id} · region-wide commodity</div>
+        <div class="d-name q-${r.quality}">${esc(r.name)}${tierBadge(r)}</div>
+        <div class="d-sub">Item #${r.id} · region-wide commodity${r.tier ? ` · crafting quality ${r.tier}/${r.tierCount}` : ''}</div>
       </div>
       <button id="detailClose" class="d-close" aria-label="Close">×</button>
     </div>
@@ -236,6 +272,8 @@ function wireControls() {
 
   $('search').addEventListener('input', debounce((e) => { state.search = e.target.value; render(); }, 120));
   $('quality').addEventListener('change', (e) => { state.quality = e.target.value; render(); });
+  $('tier').addEventListener('change', (e) => { state.tier = e.target.value; render(); });
+  $('currentExp').addEventListener('change', (e) => { state.currentExpOnly = e.target.checked; render(); });
   $('dealsOnly').addEventListener('change', (e) => { state.dealsOnly = e.target.checked; render(); });
 
   document.querySelectorAll('th[data-sort]').forEach((th) => {
@@ -261,7 +299,7 @@ function wireControls() {
 
 function buildQualityOptions() {
   const sel = $('quality');
-  sel.innerHTML = '<option value="ALL">All qualities</option>' +
+  sel.innerHTML = '<option value="ALL">All rarities</option>' +
     QUALITIES.map((q) => `<option value="${q}">${q[0] + q.slice(1).toLowerCase()}</option>`).join('');
 }
 

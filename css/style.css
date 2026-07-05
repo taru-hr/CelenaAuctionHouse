@@ -116,6 +116,18 @@ table.ah { width: 100%; border-collapse: collapse; font-size: 14px; }
 .item { display: flex; align-items: center; gap: 10px; }
 .name { font-weight: 500; }
 
+/* crafting-quality tier badge (bronze / silver / gold, T4-5 for 5-tier items) */
+.tier {
+  display: inline-block; min-width: 17px; margin-left: 7px; padding: 0 4px;
+  border-radius: 4px; font-size: 11px; font-weight: 700; line-height: 16px;
+  text-align: center; color: #0d0f16; vertical-align: middle;
+}
+.tier.t1 { background: #cd8038; color: #fff; }
+.tier.t2 { background: #b9c2d0; }
+.tier.t3 { background: #f0b429; }
+.tier.t4 { background: #3f8cff; color: #fff; }
+.tier.t5 { background: #c06bff; color: #fff; }
+
 .icon { width: 28px; height: 28px; border-radius: 5px; flex: none; background: var(--panel-2); }
 .icon-fallback {
   display: inline-flex; align-items: center; justify-content: center;

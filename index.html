@@ -30,7 +30,14 @@
 
   <section class="toolbar">
     <input id="search" type="search" placeholder="Search items…" autocomplete="off" spellcheck="false">
-    <select id="quality" aria-label="Filter by quality"></select>
+    <select id="quality" aria-label="Filter by rarity"></select>
+    <select id="tier" aria-label="Filter by crafting quality tier">
+      <option value="ALL">All tiers</option>
+      <option value="1">Tier 1</option>
+      <option value="2">Tier 2</option>
+      <option value="3">Tier 3</option>
+    </select>
+    <label class="check"><input type="checkbox" id="currentExp" checked> Midnight only</label>
     <label class="check"><input type="checkbox" id="dealsOnly"> Deals only</label>
     <span class="spacer"></span>
     <span id="count" class="count"></span>
