@@ -1,14 +1,12 @@
 name: Deploy site
 
-# Builds the static site (app files + latest data) and publishes it to GitHub Pages.
-# Runs on: code pushes to main, after each data refresh, or manually.
+# Publishes the static site to GitHub Pages on CODE changes (pushes to main).
+# Hourly DATA updates deploy themselves from update-data.yml, so this no longer
+# relies on a workflow_run hand-off (which was leaving the live site stale).
 
 on:
   push:
     branches: [main]
-  workflow_run:
-    workflows: ['Update auction data']
-    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -22,8 +20,6 @@ concurrency:
 
 jobs:
   deploy:
-    # Skip only when a *failed* data run triggered us; all other cases deploy.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

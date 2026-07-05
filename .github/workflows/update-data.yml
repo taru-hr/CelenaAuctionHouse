@@ -1,8 +1,8 @@
 name: Update auction data
 
-# Pulls the EU commodities snapshot once per hour and stores it on the `data`
-# branch (as a single always-overwritten commit, so history never bloats the repo).
-# Deployment is handled separately by deploy.yml, which re-runs when this finishes.
+# Hourly: pull commodities + Ravencrest BoEs, store them on the `data` branch
+# (single always-overwritten commit), then deploy the site directly — no
+# workflow_run hand-off, so the live site can't fall behind the data.
 
 on:
   schedule:
@@ -10,17 +10,22 @@ on:
   workflow_dispatch:          # lets you trigger a run manually from the Actions tab
 
 permissions:
-  contents: write             # needed to push the data branch
+  contents: write             # push the data branch
+  pages: write                # deploy Pages
+  id-token: write             # Pages OIDC
 
 concurrency:
-  group: update-data
+  group: pages                # shared with deploy.yml so deploys never race
   cancel-in-progress: false
 
 jobs:
   update:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - name: Checkout (scripts)
+      - name: Checkout (app + scripts)
         uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
@@ -49,7 +54,7 @@ jobs:
         run: node scripts/fetch-commodities.mjs
 
       - name: Fetch Midnight BoEs (Ravencrest)
-        continue-on-error: true    # don't fail the commodities update if BoE fetch has a hiccup
+        continue-on-error: true    # don't fail the whole run if BoE fetch has a hiccup
         env:
           BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
           BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
@@ -70,3 +75,26 @@ jobs:
           git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ----- deploy the freshly-fetched data straight to Pages -----
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude '.git' --exclude '.github' --exclude '.claude' \
+            --exclude 'node_modules' --exclude 'scripts' --exclude 'dist' --exclude '_site' \
+            --exclude 'webpack.*.js' --exclude 'webpack.common.js' \
+            --exclude 'package.json' --exclude 'package-lock.json' \
+            --exclude '.editorconfig' --exclude '.gitattributes' --exclude '.gitignore' \
+            --exclude 'data' \
+            ./ _site/
+          mkdir -p _site/data
+          rsync -a --exclude '.git' data/ _site/data/
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
