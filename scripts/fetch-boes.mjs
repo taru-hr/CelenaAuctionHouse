@@ -39,7 +39,7 @@ const OAUTH_PATH = REGION === 'cn' ? '/oauth/token' : '/token';
 const API_HOST = REGION === 'cn' ? 'https://gateway.battlenet.com.cn' : `https://${REGION}.api.blizzard.com`;
 const NS_DYNAMIC = `dynamic-${REGION}`;
 const NS_STATIC = `static-${REGION}`;
-const META_VERSION = 2;
+const META_VERSION = 3;   // bumped when meta shape changes (added base ilvl)
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.error('Missing BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET.');
@@ -150,6 +150,7 @@ async function main() {
         q: item.quality?.type || 'COMMON',
         i: media?.assets?.find((a) => a.key === 'icon')?.value || '',
         slot: item.inventory_type?.name || item.item_class?.name || '',
+        base: item.preview_item?.level?.value ?? item.level ?? 0, // displayed base ilvl (clamp fallback)
       };
     });
     await writeFile(path.join(DATA_DIR, 'boe-meta.json'), JSON.stringify(meta));
@@ -182,16 +183,37 @@ async function main() {
   await writeFile(path.join(DATA_DIR, 'boe-ilvlcache.json'), JSON.stringify(ilvlCache));
   console.log(`[ilvl] resolved ${resolved}/${toResolve.length}`);
 
-  // group by item id + ilvl (unresolved variants stay separate with ilvl 0 -> shown as "?")
+  // attach each variant's resolved ilvl (0 = unresolved -> shown as "?")
+  for (const e of variants) {
+    const raw = ilvlCache[`${e.id}|${e.sig}`];
+    e.ilvl = typeof raw === 'number' && raw > 0 ? raw : 0;
+  }
+
+  // Wowhead occasionally over-applies a scaling bonus and returns a value near
+  // the item's bogus internal max (e.g. 603) while the game shows the base (86).
+  // Detect it as a within-item outlier (>3x the item's cheapest resolved ilvl)
+  // and clamp it back to the item's displayed base level.
+  const minIlvl = new Map();
+  for (const e of variants) {
+    if (!e.ilvl) continue;
+    const m = minIlvl.get(e.id);
+    if (m === undefined || e.ilvl < m) minIlvl.set(e.id, e.ilvl);
+  }
+  let clamped = 0;
+  for (const e of variants) {
+    const base = meta[e.id]?.base || 0;
+    if (e.ilvl && base && e.ilvl > minIlvl.get(e.id) * 3 && e.ilvl > base) { e.ilvl = base; clamped++; }
+  }
+  if (clamped) console.log(`[ilvl] clamped ${clamped} outlier variant(s) to item base`);
+
+  // group by item id + ilvl (unresolved variants stay separate with ilvl 0)
   const groups = new Map();
   let pending = 0;
   for (const e of variants) {
-    const raw = ilvlCache[`${e.id}|${e.sig}`];
-    const ilvl = typeof raw === 'number' ? raw : 0;
-    if (!ilvl) pending++;
-    const key = ilvl ? `${e.id}:${ilvl}` : `${e.id}|${e.sig}`;
+    if (!e.ilvl) pending++;
+    const key = e.ilvl ? `${e.id}:${e.ilvl}` : `${e.id}|${e.sig}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { id: e.id, ilvl, buyouts: [] }));
+    if (!g) groups.set(key, (g = { id: e.id, ilvl: e.ilvl, buyouts: [] }));
     g.buyouts.push(...e.buyouts);
   }
 
