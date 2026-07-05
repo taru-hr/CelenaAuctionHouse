@@ -139,6 +139,12 @@ table.ah { width: 100%; border-collapse: collapse; font-size: 14px; }
 .up { color: var(--red); }
 .down { color: var(--green); }
 
+/* flip / profit indicator */
+.flip { font-variant-numeric: tabular-nums; font-weight: 600; }
+.flip-lo { color: var(--muted); }
+.flip-mid { color: #7fbcff; }
+.flip-hi { color: #6ee79f; }
+
 /* money */
 .money { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .m-g { color: var(--m-g); }
@@ -210,6 +216,13 @@ span.d-icon { display: inline-flex; align-items: center; justify-content: center
 .d-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
 .d-price .money { font-size: 15px; }
 .d-qty { font-variant-numeric: tabular-nums; font-size: 15px; }
+
+.d-flip {
+  background: rgba(67,209,122,.1); border: 1px solid rgba(67,209,122,.25);
+  border-radius: 8px; padding: 9px 12px; margin-bottom: 12px; font-size: 13px;
+}
+.d-flip b { font-variant-numeric: tabular-nums; }
+.d-flip-none { background: rgba(139,147,167,.1); border-color: var(--border); color: var(--muted); }
 
 .d-signal { margin-bottom: 14px; }
 .sig { display: block; padding: 10px 12px; border-radius: 8px; font-size: 13.5px; font-weight: 500; }

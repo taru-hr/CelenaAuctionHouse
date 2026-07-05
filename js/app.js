@@ -3,7 +3,7 @@
 // and shows a price-history chart + "buy signal" when you pick an item.
 
 import { loadIndex, loadHistory } from './data.js';
-import { moneyHTML, moneyText, fmtQty, fmtPct, timeAgo } from './format.js';
+import { moneyHTML, moneyText, fmtQty, timeAgo } from './format.js';
 import { PriceChart } from './chart.js';
 
 const VISIBLE_LIMIT = 400; // cap rendered rows for performance; search to narrow
@@ -13,9 +13,12 @@ const QUALITIES = ['POOR', 'COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'A
 // goods sprawl below it. Bump toward 237000 for a stricter Midnight-only view.
 const CURRENT_EXPANSION_MIN_ID = 234000;
 
+// Retail auction house takes a 5% cut on a sale, so you keep 95% of the sale price.
+const AH_CUT = 0.95;
+
 const state = {
   rows: [],
-  sortKey: 'qty',
+  sortKey: 'flip',
   sortDir: -1, // -1 desc, 1 asc
   search: '',
   quality: 'ALL',
@@ -58,6 +61,9 @@ function buildRows(latest, meta) {
     const avg = avg14 || market;
     const below = avg > 0 ? (avg - market) / avg : 0; // 0.12 => 12% under typical
     const nearLow = market <= (low14 || min) * 1.02;
+    // Flip: buy the cheapest listing, resell at market, minus the 5% AH cut.
+    const flipProfit = Math.round(market * AH_CUT - min);
+    const flipRoi = min > 0 && flipProfit > 0 ? flipProfit / min : 0;
     out.push({
       id,
       name: m.n || `Item ${id}`,
@@ -66,7 +72,7 @@ function buildRows(latest, meta) {
       min, market, qty,
       pct24: pct24 == null ? null : pct24,
       avg14: avg, low14: low14 || min,
-      below, nearLow,
+      below, nearLow, flipProfit, flipRoi,
       tier: 0, tierCount: 0,
     });
   }
@@ -112,6 +118,7 @@ function render() {
     let av, bv;
     if (sortKey === 'name') { av = a.name.toLowerCase(); bv = b.name.toLowerCase(); return av < bv ? -sortDir : av > bv ? sortDir : 0; }
     if (sortKey === 'deal') { av = a.below; bv = b.below; }
+    else if (sortKey === 'flip') { av = a.flipRoi; bv = b.flipRoi; }
     else { av = a[sortKey]; bv = b[sortKey]; }
     if (av == null) av = -Infinity;
     if (bv == null) bv = -Infinity;
@@ -136,17 +143,29 @@ function rowHTML(r) {
     ? `<img class="icon" loading="lazy" src="${r.icon}" alt="" onerror="this.style.visibility='hidden'">`
     : `<span class="icon icon-fallback q-${r.quality}">${esc(r.name[0] || '?')}</span>`;
 
-  const pctCls = r.pct24 == null ? '' : r.pct24 > 0 ? 'up' : r.pct24 < 0 ? 'down' : '';
-  const pct = r.pct24 == null ? '<span class="dim">—</span>' : `<span class="${pctCls}">${fmtPct(r.pct24)}</span>`;
-
   return `<tr data-id="${r.id}">
     <td class="c-item"><a class="item" href="#item-${r.id}">${iconCell}<span class="name q-${r.quality}">${esc(r.name)}</span>${tierBadge(r)}</a></td>
     <td class="c-num">${moneyHTML(r.min)}</td>
     <td class="c-num">${moneyHTML(r.market)}</td>
+    <td class="c-num">${flipCell(r)}</td>
     <td class="c-num dim">${fmtQty(r.qty)}</td>
-    <td class="c-num">${pct}</td>
     <td class="c-deal">${dealBadge(r)}</td>
   </tr>`;
+}
+
+// Profit if you buy the cheapest listing and resell at market (after the AH cut).
+function flipCell(r) {
+  if (r.flipRoi < 0.02) return '<span class="dim">—</span>';
+  const cls = r.flipRoi >= 0.25 ? 'flip-hi' : r.flipRoi >= 0.1 ? 'flip-mid' : 'flip-lo';
+  return `<span class="flip ${cls}" title="Buy ${moneyText(r.min)} → resell ~${moneyText(r.market)} (−5% cut) ≈ +${moneyText(r.flipProfit)} each">+${Math.round(r.flipRoi * 100)}%</span>`;
+}
+
+function flipSummary(r) {
+  if (r.flipRoi < 0.02) {
+    return `<div class="d-flip d-flip-none">Thin margin — buy ≈ sell after the 5% cut. Not a flip right now.</div>`;
+  }
+  return `<div class="d-flip">Flip: buy <b>${moneyText(r.min)}</b> → resell ~<b>${moneyText(r.market)}</b>
+    <span class="dim">(−5% cut)</span> ≈ <b class="flip-hi">+${moneyText(r.flipProfit)}</b> each (<b>+${Math.round(r.flipRoi * 100)}%</b>)</div>`;
 }
 
 function tierBadge(r) {
@@ -203,6 +222,7 @@ function detailShell(r) {
       <div><span class="d-label">Market</span>${moneyHTML(r.market)}</div>
       <div><span class="d-label">Quantity</span><span class="d-qty">${fmtQty(r.qty)}</span></div>
     </div>
+    ${flipSummary(r)}
     <div id="signal" class="d-signal"></div>
     <div class="d-chart"><canvas id="chartCanvas"></canvas></div>
     <div class="d-legend"><span class="k-market">Market price</span><span class="k-min">Cheapest</span></div>
