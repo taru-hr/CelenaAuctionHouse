@@ -147,8 +147,11 @@ async function main() {
   const ids = [...new Set(midnight.map((a) => a.item.id))];
   console.log(`[filter] ${midnight.length.toLocaleString()} Midnight listings across ${ids.length} item ids`);
 
-  // 4) item metadata (equippable? base ilvl? slot?) — cached, capped per run
-  const meta = await readJson(path.join(DATA_DIR, 'boe-meta.json'), {});
+  // 4) item metadata (equippable? base ilvl? slot?) — cached, capped per run.
+  //    Bump META_VERSION when the meta shape changes to force a full refetch.
+  const META_VERSION = 2;
+  let meta = await readJson(path.join(DATA_DIR, 'boe-meta.json'), {});
+  if (meta._v !== META_VERSION) { meta = { _v: META_VERSION }; console.log('[meta] schema changed — refetching all'); }
   const missing = ids.filter((id) => meta[id] === undefined);
   const toFetch = missing.slice(0, MAX_NEW_META);
   if (toFetch.length) {
@@ -164,7 +167,9 @@ async function main() {
         n: item.name || `Item ${id}`,
         q: item.quality?.type || 'COMMON',
         i: media?.assets?.find((a) => a.key === 'icon')?.value || '',
-        base: item.level || 0,
+        // Use the DISPLAYED item level; the top-level `item.level` is an internal
+        // value (e.g. 662) that's wrong for scaling/raid gear.
+        base: item.preview_item?.level?.value ?? item.level ?? 0,
         slot: item.inventory_type?.name || item.item_class?.name || '',
       };
     });
