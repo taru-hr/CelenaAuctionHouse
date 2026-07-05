@@ -45,6 +45,7 @@ jobs:
           WOW_REGION: eu
           WOW_LOCALE: en_GB
           HISTORY_DAYS: '60'
+          MAX_NEW_META: '12000'   # backfill all item names in one run (~2 calls each, well under the 36k/hr limit)
         run: node scripts/fetch-commodities.mjs
 
       - name: Publish to data branch
