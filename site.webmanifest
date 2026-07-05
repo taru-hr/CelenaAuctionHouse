@@ -1,0 +1,14 @@
+{
+  "short_name": "Celena AH",
+  "name": "Celena Auction House",
+  "description": "Hourly WoW EU commodity auction prices — sort, filter, and find the cheapest time to buy.",
+  "icons": [
+    { "src": "icon.png", "type": "image/png", "sizes": "192x192" },
+    { "src": "icon.svg", "type": "image/svg+xml", "sizes": "any" }
+  ],
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0f16",
+  "theme_color": "#0d0f16"
+}

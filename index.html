@@ -1,0 +1,68 @@
+<!doctype html>
+<html class="no-js" lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Celena Auction House — EU commodity prices</title>
+  <link rel="stylesheet" href="css/style.css">
+  <meta name="description" content="Hourly World of Warcraft EU commodity auction prices. Sort, filter, and spot the cheapest time to buy.">
+
+  <meta property="og:title" content="Celena Auction House">
+  <meta property="og:type" content="website">
+  <meta property="og:description" content="Hourly WoW EU commodity prices — find the cheapest time to buy.">
+
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <meta name="theme-color" content="#0d0f16">
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚑</span>
+      <h1>Celena <span>Auction House</span></h1>
+    </div>
+    <div class="status" id="status">Loading…</div>
+  </header>
+
+  <section class="toolbar">
+    <input id="search" type="search" placeholder="Search items…" autocomplete="off" spellcheck="false">
+    <select id="quality" aria-label="Filter by quality"></select>
+    <label class="check"><input type="checkbox" id="dealsOnly"> Deals only</label>
+    <span class="spacer"></span>
+    <span id="count" class="count"></span>
+  </section>
+
+  <main class="layout">
+    <div class="table-wrap">
+      <table class="ah">
+        <thead>
+          <tr>
+            <th data-sort="name" class="c-item">Item</th>
+            <th data-sort="min" class="c-num">Cheapest</th>
+            <th data-sort="market" class="c-num">Market</th>
+            <th data-sort="qty" class="c-num">Qty</th>
+            <th data-sort="pct24" class="c-num">24h</th>
+            <th data-sort="deal" class="c-deal">vs&nbsp;avg</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="empty" hidden></div>
+    </div>
+
+    <aside id="detail" class="detail" hidden></aside>
+  </main>
+
+  <footer class="footer">
+    <span>Data from the Blizzard API · refreshed hourly via GitHub Actions · commodities are region-wide (EU).</span>
+    <span>Not affiliated with Blizzard Entertainment.</span>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+
+</html>

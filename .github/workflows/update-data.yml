@@ -1,0 +1,61 @@
+name: Update auction data
+
+# Pulls the EU commodities snapshot once per hour and stores it on the `data`
+# branch (as a single always-overwritten commit, so history never bloats the repo).
+# Deployment is handled separately by deploy.yml, which re-runs when this finishes.
+
+on:
+  schedule:
+    - cron: '7 * * * *'      # hourly at :07 (a few min after Blizzard's ~hourly refresh)
+  workflow_dispatch:          # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write             # needed to push the data branch
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (scripts)
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Restore existing data branch
+        run: |
+          mkdir -p data/history
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch --depth=1 origin data
+            git archive FETCH_HEAD | tar -x -C data
+            echo "Restored $(ls data/history | wc -l) history files."
+          else
+            echo "No data branch yet — starting fresh."
+          fi
+
+      - name: Fetch commodities
+        env:
+          BLIZZARD_CLIENT_ID: ${{ secrets.BLIZZARD_CLIENT_ID }}
+          BLIZZARD_CLIENT_SECRET: ${{ secrets.BLIZZARD_CLIENT_SECRET }}
+          WOW_REGION: eu
+          WOW_LOCALE: en_GB
+          HISTORY_DAYS: '60'
+        run: node scripts/fetch-commodities.mjs
+
+      - name: Publish to data branch
+        run: |
+          cd data
+          rm -rf .git
+          git init -q -b data
+          git add -A
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -qm "data update $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

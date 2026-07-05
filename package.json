@@ -1,0 +1,23 @@
+{
+  "name": "celena-auction-house",
+  "version": "1.0.0",
+  "description": "Hourly World of Warcraft EU commodity auction prices, hosted on GitHub Pages and powered by GitHub Actions + the Blizzard API.",
+  "private": true,
+  "type": "module",
+  "keywords": ["wow", "auction-house", "blizzard-api", "github-pages"],
+  "license": "MIT",
+  "scripts": {
+    "fetch:data": "node scripts/fetch-commodities.mjs",
+    "serve": "perl scripts/serve.pl 8123 .",
+    "start": "webpack serve --open --config webpack.config.dev.js",
+    "build": "webpack --config webpack.config.prod.js"
+  },
+  "devDependencies": {
+    "copy-webpack-plugin": "^11.0.0",
+    "html-webpack-plugin": "^5.6.0",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.0.4",
+    "webpack-merge": "^5.10.0"
+  }
+}

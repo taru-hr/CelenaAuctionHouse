@@ -1,0 +1,61 @@
+name: Deploy site
+
+# Builds the static site (app files + latest data) and publishes it to GitHub Pages.
+# Runs on: code pushes to main, after each data refresh, or manually.
+
+on:
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: ['Update auction data']
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Skip only when a *failed* data run triggered us; all other cases deploy.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout (app)
+        uses: actions/checkout@v4
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude '.git' --exclude '.github' --exclude '.claude' \
+            --exclude 'node_modules' --exclude 'scripts' --exclude 'dist' --exclude '_site' \
+            --exclude 'webpack.*.js' --exclude 'webpack.common.js' \
+            --exclude 'package.json' --exclude 'package-lock.json' \
+            --exclude '.editorconfig' --exclude '.gitattributes' --exclude '.gitignore' \
+            ./ _site/
+          # Overlay the live data branch (falls back to the sample data in the repo).
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch --depth=1 origin data
+            rm -rf _site/data && mkdir -p _site/data
+            git archive FETCH_HEAD | tar -x -C _site/data
+            echo "Deployed live data ($(ls _site/data/history | wc -l) series)."
+          else
+            echo "No data branch yet — deploying with sample data."
+          fi
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
