@@ -96,7 +96,7 @@ function rowHTML(r) {
     : `<span class="icon icon-fallback q-${r.quality}">${esc(r.name[0] || '?')}</span>`;
   return `<tr data-key="${r.key}">
     <td class="c-item"><a class="item" href="#${r.key}">${icon}<span><span class="name q-${r.quality}">${esc(r.name)}</span>${r.slot ? `<span class="slot">${esc(r.slot)}</span>` : ''}</span></a></td>
-    <td class="c-num ilvl">${r.ilvl}</td>
+    <td class="c-num ilvl">${r.ilvl || '?'}</td>
     <td class="c-num">${moneyHTML(r.cheapest)}</td>
     <td class="c-num dim">${r.resell ? moneyHTML(r.resell) : '—'}</td>
     <td class="c-num">${flipCell(r)}</td>
@@ -135,7 +135,7 @@ function openDetail(key) {
         : `<span class="d-icon icon-fallback q-${r.quality}">${esc(r.name[0] || '?')}</span>`}
       <div>
         <div class="d-name q-${r.quality}">${esc(r.name)}</div>
-        <div class="d-sub">ilvl ${r.ilvl}${r.slot ? ` · ${esc(r.slot)}` : ''} · Item #${r.id} · ${r.count} listing${r.count === 1 ? '' : 's'}</div>
+        <div class="d-sub">ilvl ${r.ilvl || '?'}${r.slot ? ` · ${esc(r.slot)}` : ''} · Item #${r.id} · ${r.count} listing${r.count === 1 ? '' : 's'}</div>
       </div>
       <button id="detailClose" class="d-close" aria-label="Close">×</button>
     </div>

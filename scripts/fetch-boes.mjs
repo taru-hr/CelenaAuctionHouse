@@ -2,19 +2,23 @@
 /**
  * Celena Auction House — BoE (bind-on-equip gear) fetcher for one realm.
  *
- * Commodities barely flip; mispriced BoE gear does. This:
- *   1. Resolves a realm slug -> connected-realm id.
- *   2. Loads a bonus-id -> item-level-delta map (datamined ItemBonus.db2 via
- *      wago.tools), cached and refreshed weekly.
- *   3. Pulls the connected realm's auctions, keeps current-expansion equippable
- *      gear (BoP items can't be auctioned, so anything equippable IS tradeable).
- *   4. Computes each listing's item level = base ilvl + Type-1 bonus deltas.
- *   5. Groups by (item id + ilvl) and records the sorted buyouts, so the frontend
- *      can flag a listing sitting far below the rest of its item+ilvl.
+ * Item level can't be derived from the auction API (it only gives bonus IDs),
+ * and decoding it from ItemBonus.db2 is a deep rabbit hole (level selectors /
+ * scaling curves). So we let Wowhead's tooltip API do the decoding: each
+ * listing's bonus signature -> exact item level, cached by signature so we only
+ * ask Wowhead once per distinct variant.
+ *
+ *   1. Resolve realm slug -> connected-realm id.
+ *   2. Pull the realm's auctions; keep current-expansion equippable gear
+ *      (BoP can't be auctioned, so anything equippable IS tradeable).
+ *   3. Group listings by item id + bonus signature.
+ *   4. Resolve each variant's item level via Wowhead (cached in boe-ilvlcache.json).
+ *   5. Group by item + ilvl and record sorted buyouts for the flip radar.
  *
  * Required env: BLIZZARD_CLIENT_ID, BLIZZARD_CLIENT_SECRET
  * Optional env: WOW_REGION(eu) WOW_LOCALE(en_GB) WOW_REALM_SLUG(ravencrest)
  *               DATA_DIR(data) MIN_ITEM_ID(234000) MAX_NEW_META(4000)
+ *               MAX_NEW_ILVL(1500)
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -24,8 +28,9 @@ const REGION = (process.env.WOW_REGION || 'eu').toLowerCase();
 const LOCALE = process.env.WOW_LOCALE || 'en_GB';
 const REALM_SLUG = (process.env.WOW_REALM_SLUG || 'ravencrest').toLowerCase();
 const DATA_DIR = process.env.DATA_DIR || 'data';
-const MIN_ITEM_ID = Number(process.env.MIN_ITEM_ID || 234000); // current-expansion cutoff
+const MIN_ITEM_ID = Number(process.env.MIN_ITEM_ID || 234000);
 const MAX_NEW_META = Number(process.env.MAX_NEW_META || 4000);
+const MAX_NEW_ILVL = Number(process.env.MAX_NEW_ILVL || 1500); // Wowhead lookups per run
 const CLIENT_ID = process.env.BLIZZARD_CLIENT_ID;
 const CLIENT_SECRET = process.env.BLIZZARD_CLIENT_SECRET;
 
@@ -34,8 +39,7 @@ const OAUTH_PATH = REGION === 'cn' ? '/oauth/token' : '/token';
 const API_HOST = REGION === 'cn' ? 'https://gateway.battlenet.com.cn' : `https://${REGION}.api.blizzard.com`;
 const NS_DYNAMIC = `dynamic-${REGION}`;
 const NS_STATIC = `static-${REGION}`;
-const BONUS_CSV = 'https://wago.tools/db2/ItemBonus/csv';
-const BONUS_TTL = 7 * 86400; // refresh the datamined bonus map weekly
+const META_VERSION = 2;
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
   console.error('Missing BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET.');
@@ -92,33 +96,20 @@ async function mapPool(items, limit, fn) {
   return out;
 }
 
-// ---- bonus-id -> item-level delta (datamined, cached weekly) --------------
-async function loadBonusMap() {
-  const file = path.join(DATA_DIR, 'boe-bonusmap.json');
-  const cached = await readJson(file, null);
-  if (cached && cached._fetched && nowSec() - cached._fetched < BONUS_TTL) {
-    console.log(`[bonus] using cached map (${Object.keys(cached.map).length} ilvl bonuses)`);
-    return cached.map;
+/** Ask Wowhead's tooltip API for the item level of a specific bonus signature. */
+async function wowheadIlvl(id, sig) {
+  const url = `https://nether.wowhead.com/tooltip/item/${id}` + (sig ? `?bonus=${sig}` : '');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let res;
+    try { res = await fetch(url, { headers: { 'User-Agent': 'CelenaAuctionHouse/1.0 (GitHub Pages hobby project)' } }); }
+    catch { await sleep(400 * 2 ** attempt); continue; }
+    if (res.status === 429 || res.status >= 500) { await sleep(1000 * 2 ** attempt); continue; }
+    if (!res.ok) return null;
+    const text = await res.text();
+    const m = text.match(/Item Level\D{0,24}(\d{1,4})/); // tolerant of "<!--ilvl-->" / escaping
+    return m ? Number(m[1]) : null;
   }
-  console.log('[bonus] downloading ItemBonus from wago.tools…');
-  const res = await fetch(BONUS_CSV);
-  if (!res.ok) {
-    if (cached) { console.warn('[bonus] download failed, reusing stale cache'); return cached.map; }
-    throw new Error(`ItemBonus download failed: ${res.status}`);
-  }
-  const text = await res.text();
-  // header: ID,Value_0,Value_1,Value_2,Value_3,ParentItemBonusListID,Type,OrderIndex
-  const map = {};
-  const lines = text.split('\n');
-  for (let i = 1; i < lines.length; i++) {
-    const c = lines[i].split(',');
-    if (c.length < 7 || c[6] !== '1') continue; // Type 1 = item level delta
-    const bonus = c[5];
-    map[bonus] = (map[bonus] || 0) + (parseInt(c[1], 10) || 0); // Value_0
-  }
-  await writeFile(file, JSON.stringify({ _fetched: nowSec(), map }));
-  console.log(`[bonus] built map for ${Object.keys(map).length} ilvl bonuses`);
-  return map;
+  return null;
 }
 
 async function main() {
@@ -126,85 +117,97 @@ async function main() {
   await mkdir(DATA_DIR, { recursive: true });
   const token = await getToken();
 
-  // 1) realm slug -> connected realm id
   const realm = await apiGet(token, `/data/wow/realm/${REALM_SLUG}`, NS_DYNAMIC);
-  const href = realm?.connected_realm?.href || '';
-  const crId = Number((href.match(/connected-realm\/(\d+)/) || [])[1]);
+  const crId = Number((String(realm?.connected_realm?.href || '').match(/connected-realm\/(\d+)/) || [])[1]);
   if (!crId) throw new Error(`Could not resolve connected realm for "${REALM_SLUG}"`);
   console.log(`[realm] ${REALM_SLUG} -> connected realm ${crId}`);
 
-  const bonusMap = await loadBonusMap();
-
-  // 2) pull the realm's auctions
   console.log('[fetch] connected-realm auctions…');
   const dump = await apiGet(token, `/data/wow/connected-realm/${crId}/auctions`, NS_DYNAMIC);
   const auctions = dump?.auctions ?? [];
   console.log(`[fetch] ${auctions.length.toLocaleString()} listings`);
   if (!auctions.length) throw new Error('No auctions returned — aborting to avoid overwriting good data.');
 
-  // 3) keep current-expansion listings that have a buyout
   const midnight = auctions.filter((a) => a.item?.id >= MIN_ITEM_ID && a.buyout > 0);
   const ids = [...new Set(midnight.map((a) => a.item.id))];
   console.log(`[filter] ${midnight.length.toLocaleString()} Midnight listings across ${ids.length} item ids`);
 
-  // 4) item metadata (equippable? base ilvl? slot?) — cached, capped per run.
-  //    Bump META_VERSION when the meta shape changes to force a full refetch.
-  const META_VERSION = 2;
+  // item metadata (equippable? name? slot?) — cached, capped per run
   let meta = await readJson(path.join(DATA_DIR, 'boe-meta.json'), {});
   if (meta._v !== META_VERSION) { meta = { _v: META_VERSION }; console.log('[meta] schema changed — refetching all'); }
-  const missing = ids.filter((id) => meta[id] === undefined);
-  const toFetch = missing.slice(0, MAX_NEW_META);
-  if (toFetch.length) {
-    console.log(`[meta] looking up ${toFetch.length} items (${missing.length} missing)`);
-    await mapPool(toFetch, 20, async (id) => {
+  const missingMeta = ids.filter((id) => meta[id] === undefined);
+  const metaFetch = missingMeta.slice(0, MAX_NEW_META);
+  if (metaFetch.length) {
+    console.log(`[meta] looking up ${metaFetch.length} items (${missingMeta.length} missing)`);
+    await mapPool(metaFetch, 20, async (id) => {
       const [item, media] = await Promise.all([
         apiGet(token, `/data/wow/item/${id}`, NS_STATIC).catch(() => null),
         apiGet(token, `/data/wow/media/item/${id}`, NS_STATIC).catch(() => null),
       ]);
-      if (!item) { meta[id] = null; return; }                       // remember misses
-      if (!item.is_equippable) { meta[id] = null; return; }         // gear only
+      if (!item || !item.is_equippable) { meta[id] = null; return; }
       meta[id] = {
         n: item.name || `Item ${id}`,
         q: item.quality?.type || 'COMMON',
         i: media?.assets?.find((a) => a.key === 'icon')?.value || '',
-        // Use the DISPLAYED item level; the top-level `item.level` is an internal
-        // value (e.g. 662) that's wrong for scaling/raid gear.
-        base: item.preview_item?.level?.value ?? item.level ?? 0,
         slot: item.inventory_type?.name || item.item_class?.name || '',
       };
     });
     await writeFile(path.join(DATA_DIR, 'boe-meta.json'), JSON.stringify(meta));
   }
 
-  // 5) compute ilvl per listing, group by item id + ilvl
-  const groups = new Map(); // "id:ilvl" -> { id, ilvl, buyouts: [] }
+  // group listings by item id + bonus signature
+  const bySig = new Map();
   for (const a of midnight) {
-    const m = meta[a.item.id];
-    if (!m) continue; // not equippable gear (or metadata not fetched yet)
-    let ilvl = m.base;
-    for (const b of a.item.bonus_lists || []) ilvl += bonusMap[b] || 0;
-    const key = `${a.item.id}:${ilvl}`;
+    if (!meta[a.item.id]) continue; // not equippable gear
+    const sig = (a.item.bonus_lists || []).slice().sort((x, y) => x - y).join(':');
+    const key = `${a.item.id}|${sig}`;
+    let e = bySig.get(key);
+    if (!e) bySig.set(key, (e = { id: a.item.id, sig, buyouts: [] }));
+    e.buyouts.push(a.buyout);
+  }
+  console.log(`[group] ${bySig.size} distinct item+bonus variants`);
+
+  // resolve item level per variant via Wowhead (cached by signature)
+  const ilvlCache = await readJson(path.join(DATA_DIR, 'boe-ilvlcache.json'), {});
+  const variants = [...bySig.values()];
+  const toResolve = variants.filter((e) => ilvlCache[`${e.id}|${e.sig}`] === undefined).slice(0, MAX_NEW_ILVL);
+  console.log(`[ilvl] resolving ${toResolve.length} new variants via Wowhead`);
+  let resolved = 0;
+  await mapPool(toResolve, 3, async (e) => {
+    const ilvl = await wowheadIlvl(e.id, e.sig);
+    ilvlCache[`${e.id}|${e.sig}`] = ilvl;
+    if (ilvl != null) resolved++;
+    await sleep(120); // be polite to Wowhead
+  });
+  await writeFile(path.join(DATA_DIR, 'boe-ilvlcache.json'), JSON.stringify(ilvlCache));
+  console.log(`[ilvl] resolved ${resolved}/${toResolve.length}`);
+
+  // group by item id + ilvl (unresolved variants stay separate with ilvl 0 -> shown as "?")
+  const groups = new Map();
+  let pending = 0;
+  for (const e of variants) {
+    const raw = ilvlCache[`${e.id}|${e.sig}`];
+    const ilvl = typeof raw === 'number' ? raw : 0;
+    if (!ilvl) pending++;
+    const key = ilvl ? `${e.id}:${ilvl}` : `${e.id}|${e.sig}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { id: a.item.id, ilvl, buyouts: [] }));
-    g.buyouts.push(a.buyout);
+    if (!g) groups.set(key, (g = { id: e.id, ilvl, buyouts: [] }));
+    g.buyouts.push(...e.buyouts);
   }
 
   const items = [...groups.values()]
-    .map((g) => {
-      g.buyouts.sort((x, y) => x - y);
-      return { i: g.id, l: g.ilvl, n: g.buyouts.length, p: g.buyouts.slice(0, 20) };
-    })
+    .map((g) => { g.buyouts.sort((x, y) => x - y); return { i: g.id, l: g.ilvl, n: g.buyouts.length, p: g.buyouts.slice(0, 20) }; })
     .sort((a, b) => a.i - b.i || a.l - b.l);
-  console.log(`[reduce] ${items.length} item+ilvl groups`);
+  console.log(`[reduce] ${items.length} groups (${pending} variants still awaiting ilvl)`);
 
   const ts = nowSec();
   await writeFile(path.join(DATA_DIR, 'boe-latest.json'),
     JSON.stringify({ updated: ts, realm: REALM_SLUG, region: REGION, connectedRealm: crId, count: items.length, items }));
   await writeFile(path.join(DATA_DIR, 'boe-status.json'), JSON.stringify({
     updated: ts, realm: REALM_SLUG, connectedRealm: crId, listings: auctions.length,
-    midnightListings: midnight.length, groups: items.length,
-    metaCached: Object.keys(meta).length, metaMissing: Math.max(0, missing.length - toFetch.length),
-    tookMs: Date.now() - started,
+    midnightListings: midnight.length, variants: variants.length, groups: items.length,
+    ilvlPending: pending, metaCached: Object.keys(meta).length - 1,
+    metaMissing: Math.max(0, missingMeta.length - metaFetch.length), tookMs: Date.now() - started,
   }));
   console.log(`[done] ${items.length} groups in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
