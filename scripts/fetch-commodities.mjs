@@ -104,6 +104,38 @@ async function readJson(file, fallback) {
   }
 }
 
+// Estimate units sold per day from an item's standing-quantity history.
+//
+// The commodities endpoint gives an hourly, region-wide *total quantity* per
+// item with no per-auction identity, so (unlike TSM, which watches individual
+// listings vanish) we can't observe sales directly. Instead we treat each hour's
+// DROP in total quantity as net removal and average it to a daily rate. It's a
+// turnover proxy: biased a little high by seller cancels/expiries, a little low
+// by sales masked by same-hour restocks — but it tracks real demand closely
+// enough to rank how fast an item moves, which is what a flipper needs.
+//
+//   sold/day ≈ Σ(positive hour-over-hour drops) / observed_hours × 24
+//
+// Returns null until there's enough history (~12h) for the number to mean
+// something. `t`/`q` are the pruned hourly timestamp/quantity series.
+function estimateSoldPerDay(t, q, now) {
+  const WINDOW = 14 * 86400;   // weight the last ~14 days of turnover
+  const MAX_GAP = 6 * 3600;    // a pair straddling a >6h gap (downtime) is skipped
+  const from = now - WINDOW;
+  let removed = 0, seconds = 0;
+  for (let k = 1; k < t.length; k++) {
+    if (t[k] < from) continue;
+    const dt = t[k] - t[k - 1];
+    if (dt <= 0 || dt > MAX_GAP) continue;     // skip gaps / bad timestamps
+    const drop = q[k - 1] - q[k];
+    if (drop > 0) removed += drop;             // count net removals only
+    seconds += dt;
+  }
+  if (seconds < 12 * 3600) return null;        // too little history to trust yet
+  const perDay = (removed / seconds) * 86400;
+  return Math.round(perDay * 10) / 10;         // 1 decimal keeps slow movers visible
+}
+
 // ------------------------------------------------------------------ auth ---
 async function getToken() {
   const res = await fetch(OAUTH_HOST + OAUTH_PATH, {
@@ -212,11 +244,15 @@ async function main() {
     const avg14 = n ? Math.round(sum / n) : s.market;
     const low14 = Number.isFinite(low) ? low : s.min;
 
-    rows[idx] = [id, s.min, s.market, s.qty, pct24, avg14, low14];
+    // Sell-through: estimate units sold/day from the (just-updated) qty series.
+    const spd = estimateSoldPerDay(h.t, h.q, ts);
+
+    rows[idx] = [id, s.min, s.market, s.qty, pct24, avg14, low14, spd];
   });
   console.log(`[history] updated ${rows.length.toLocaleString()} series`);
 
-  // ----- latest.json: rows [id, min, market, qty, pct24, avg14, low14]
+  // ----- latest.json: rows [id, min, market, qty, pct24, avg14, low14, spd]
+  //       (spd = estimated units sold/day, or null until ~12h of history exists)
   await writeFile(path.join(DATA_DIR, 'latest.json'), JSON.stringify({ updated: ts, region: REGION, count: rows.length, items: rows }));
 
   const status = {

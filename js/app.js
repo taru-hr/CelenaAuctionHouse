@@ -56,7 +56,7 @@ async function init() {
 // --------------------------------------------------------------- data ------
 function buildRows(latest, meta) {
   const out = [];
-  for (const [id, min, market, qty, pct24, avg14, low14] of latest.items) {
+  for (const [id, min, market, qty, pct24, avg14, low14, spd] of latest.items) {
     const m = meta[id] || {};
     const avg = avg14 || market;
     const below = avg > 0 ? (avg - market) / avg : 0; // 0.12 => 12% under typical
@@ -64,6 +64,9 @@ function buildRows(latest, meta) {
     // Flip: buy the cheapest listing, resell at market, minus the 5% AH cut.
     const flipProfit = Math.round(market * AH_CUT - min);
     const flipRoi = min > 0 && flipProfit > 0 ? flipProfit / min : 0;
+    // Sell-through: how fast the standing supply clears at the estimated pace.
+    const sold = spd == null ? null : spd;
+    const { vel, dos } = classifyVelocity(sold, qty);
     out.push({
       id,
       name: m.n || `Item ${id}`,
@@ -73,11 +76,24 @@ function buildRows(latest, meta) {
       pct24: pct24 == null ? null : pct24,
       avg14: avg, low14: low14 || min,
       below, nearLow, flipProfit, flipRoi,
+      spd: sold, vel, dos,
       tier: 0, tierCount: 0,
     });
   }
   computeTiers(out);
   return out;
+}
+
+// Turn an estimated units-sold-per-day into a demand class + days-of-supply.
+// Days-of-supply (standing qty ÷ daily sales) is item-type-agnostic: it answers
+// "if I buy and relist, how long until the shelf ahead of me clears?" — the real
+// flip question. Raw volume can't compare a bulk herb to a niche flask; this can.
+function classifyVelocity(spd, qty) {
+  if (spd == null) return { vel: null, dos: null };
+  if (spd < 1) return { vel: 'illiquid', dos: qty > 0 ? qty / Math.max(spd, 0.05) : null };
+  const dos = qty / spd;
+  const vel = dos < 1 ? 'fast' : dos < 4 ? 'steady' : 'slow';
+  return { vel, dos };
 }
 
 // Crafting-quality tiers (Dragonflight+) are separate item IDs sharing a name,
@@ -149,8 +165,31 @@ function rowHTML(r) {
     <td class="c-num">${moneyHTML(r.market)}</td>
     <td class="c-num">${flipCell(r)}</td>
     <td class="c-num dim">${fmtQty(r.qty)}</td>
+    <td class="c-num">${demandCell(r)}</td>
     <td class="c-deal">${dealBadge(r)}</td>
   </tr>`;
+}
+
+// "Sells ~X/day" coloured by demand speed; the tooltip explains days-of-supply.
+function demandCell(r) {
+  if (r.spd == null) return '<span class="dim" title="Not enough history yet — fills in after a few hourly updates">—</span>';
+  const dosTxt = r.dos != null && isFinite(r.dos) ? ` · ≈ ${fmtDos(r.dos)} of supply` : '';
+  return `<span class="vel vel-${r.vel}" title="${velLabel(r.vel)}${dosTxt}">${fmtQty(r.spd)}<span class="per">/day</span></span>`;
+}
+
+function velLabel(vel) {
+  return vel === 'fast' ? 'Sells fast — clears in under a day'
+    : vel === 'steady' ? 'Steady demand'
+    : vel === 'slow' ? 'Slow — supply outpaces sales'
+    : vel === 'illiquid' ? 'Illiquid — barely trades'
+    : 'Demand unknown';
+}
+
+// Days-of-supply as a short human string ("18h", "2.3 days", "30+ days").
+function fmtDos(dos) {
+  if (dos < 1) return Math.round(dos * 24) + 'h';
+  if (dos > 30) return '30+ days';
+  return (dos < 10 ? dos.toFixed(1) : Math.round(dos)) + ' days';
 }
 
 // Profit if you buy the cheapest listing and resell at market (after the AH cut).
@@ -164,8 +203,23 @@ function flipSummary(r) {
   if (r.flipRoi < 0.02) {
     return `<div class="d-flip d-flip-none">Thin margin — buy ≈ sell after the 5% cut. Not a flip right now.</div>`;
   }
+  // A fat margin on something that barely sells can leave your gold tied up.
+  const caveat = (r.vel === 'slow' || r.vel === 'illiquid')
+    ? ` <span class="dim">— but it sells ${r.vel === 'illiquid' ? 'rarely' : 'slowly'}, so your gold may sit a while.</span>`
+    : '';
   return `<div class="d-flip">Flip: buy <b>${moneyText(r.min)}</b> → resell ~<b>${moneyText(r.market)}</b>
-    <span class="dim">(−5% cut)</span> ≈ <b class="flip-hi">+${moneyText(r.flipProfit)}</b> each (<b>+${Math.round(r.flipRoi * 100)}%</b>)</div>`;
+    <span class="dim">(−5% cut)</span> ≈ <b class="flip-hi">+${moneyText(r.flipProfit)}</b> each (<b>+${Math.round(r.flipRoi * 100)}%</b>)${caveat}</div>`;
+}
+
+// Demand line in the detail panel: units/day + days-of-supply + plain-English read.
+function velSummary(r) {
+  if (r.spd == null) {
+    return `<div class="d-vel d-vel-none">Demand: still building — an estimate appears after a few hourly updates.</div>`;
+  }
+  const dosTxt = r.dos != null && isFinite(r.dos)
+    ? ` · ~<b>${fmtDos(r.dos)}</b> of supply at that pace` : '';
+  return `<div class="d-vel d-vel-${r.vel}">Sells ~<b>${fmtQty(r.spd)}/day</b> region-wide${dosTxt}.
+    <span class="dim">${velLabel(r.vel)}.</span></div>`;
 }
 
 function tierBadge(r) {
@@ -223,6 +277,7 @@ function detailShell(r) {
       <div><span class="d-label">Quantity</span><span class="d-qty">${fmtQty(r.qty)}</span></div>
     </div>
     ${flipSummary(r)}
+    ${velSummary(r)}
     <div id="signal" class="d-signal"></div>
     <div class="d-chart"><canvas id="chartCanvas"></canvas></div>
     <div class="d-legend"><span class="k-market">Market price</span><span class="k-min">Cheapest</span></div>
