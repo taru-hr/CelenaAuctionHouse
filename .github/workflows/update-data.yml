@@ -5,8 +5,17 @@ name: Update auction data
 # workflow_run hand-off, so the live site can't fall behind the data.
 
 on:
+  # GitHub runs scheduled workflows on a best-effort queue and silently drops most
+  # single hourly fires under load (worst at the top of the hour), so we ask ~4x/hr
+  # on offset minutes to make sure at least one survives each hour. Blizzard only
+  # refreshes ~hourly, so the extra runs mostly just keep the site fresh and catch
+  # each refresh sooner — and the fetcher de-dupes history to one point per clock
+  # hour, so firing more often does NOT bloat the data branch / Pages artifact.
   schedule:
-    - cron: '7 * * * *'      # hourly at :07 (a few min after Blizzard's ~hourly refresh)
+    - cron: '7 * * * *'
+    - cron: '22 * * * *'
+    - cron: '37 * * * *'
+    - cron: '52 * * * *'
   workflow_dispatch:          # lets you trigger a run manually from the Actions tab
 
 permissions:

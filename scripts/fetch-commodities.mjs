@@ -216,8 +216,8 @@ async function main() {
     console.log('[meta] cache is complete for this snapshot');
   }
 
-  // ----- append one hourly point to each item's history (pruning old points),
-  //       and compute per-item stats the table needs (24h change, 14d avg/low).
+  // ----- record one point per clock hour in each item's history (pruning old
+  //       points), and compute per-item stats the table needs (24h, 14d avg/low).
   const cutoff = ts - HISTORY_DAYS * 86400;
   const win14 = ts - 14 * 86400;
   const cut24 = ts - 86400;
@@ -226,7 +226,15 @@ async function main() {
   await mapPool(entries, 32, async ([id, s], idx) => {
     const file = path.join(HISTORY_DIR, `${id}.json`);
     const h = await readJson(file, { t: [], p: [], m: [], q: [] });
-    h.t.push(ts); h.p.push(s.market); h.m.push(s.min); h.q.push(s.qty);
+    // We fire ~4x/hour (GitHub drops scheduled runs, so we over-schedule). Keep
+    // history hourly by updating the current hour's point in place instead of
+    // appending — bounds the data branch / Pages artifact regardless of run rate.
+    const hn = h.t.length;
+    if (hn && Math.floor(h.t[hn - 1] / 3600) === Math.floor(ts / 3600)) {
+      h.t[hn - 1] = ts; h.p[hn - 1] = s.market; h.m[hn - 1] = s.min; h.q[hn - 1] = s.qty;
+    } else {
+      h.t.push(ts); h.p.push(s.market); h.m.push(s.min); h.q.push(s.qty);
+    }
     // Prune anything older than the retention window.
     let cut = 0;
     while (cut < h.t.length && h.t[cut] < cutoff) cut++;
